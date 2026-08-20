@@ -1,7 +1,6 @@
 # 🚀 cacheblend-nemo-rag-launchable — backend deploy
 
-> ✍🏼 Backend deploy for the RAG demo: the **TMO CacheBlend engines** (baseline + optimized) **+ NeMo Retriever**, brought up on one single-node **microk8s** cluster. The **launchable itself is NVIDIA-owned** — it clones this repo and runs `bootstrap.sh`; this repo is the dependency it consumes. The front-end (Try-It landing page + Secure Link) is NVIDIA's.
-
+> ✍🏼 Backend deploy for the RAG demo: the **TMO CacheBlend engines** (baseline + optimized) **+ NeMo Retriever**, brought up on one single-node **microk8s** cluster.  
 **Status:** `WIP / staging`
 
 ---
