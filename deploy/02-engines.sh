@@ -1,28 +1,34 @@
 #!/usr/bin/env bash
 # 02-engines.sh — TMO operator + CacheBlend engine + both vLLM arms.
-# Ported from setup-tmo-cb-cu13.sh PHASES 4-7 (manifests pulled out to ../manifests/).
-# Consumes env (from the launchable field): CB_PLUGIN_TOKEN, TMO_GHCR_TOKEN, TMO_GHCR_USER.
+# Ported from setup-tmo-cb-cu13.sh PHASES 4-7 (manifests pulled out to ../config/manifests/).
+# Consumes env (from the launchable field): TENSORMESH_API_KEY.
+#
+# Both the private chart and the private cacheblend-plugin image come from the Tensormesh
+# artifact proxy (artifacts.tensormesh.ai) — one revocable tm_... key, username is the
+# literal "x-access-token". Public OSS images (lmcache/vllm-openai, lmcache-operator)
+# still come from docker.io unauthenticated.
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"; MF="$ROOT/config/manifests"
 NS_OP=tensormesh-operator; NS_WL=cacheblend-workload
-CB_PLUGIN_USER="${CB_PLUGIN_USER:-tensormesh}"
-CHART_VERSION="${CHART_VERSION:-0.5.1-rc1}"
+REGISTRY="${TENSORMESH_REGISTRY:-artifacts.tensormesh.ai}"
+REG_USER=x-access-token
+CHART_VERSION="${CHART_VERSION:-0.5.2}"
 log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 
 # --- workload ns (privileged PSS: hostIPC) + private plugin pull secret --------
 kubectl get ns "$NS_WL" >/dev/null 2>&1 || kubectl create ns "$NS_WL"
 kubectl label ns "$NS_WL" pod-security.kubernetes.io/enforce=privileged --overwrite
-kubectl -n "$NS_WL" get secret cacheblend-plugin-pull >/dev/null 2>&1 || \
+kubectl -n "$NS_WL" delete secret cacheblend-plugin-pull --ignore-not-found >/dev/null 2>&1
 kubectl -n "$NS_WL" create secret docker-registry cacheblend-plugin-pull \
-  --docker-server=https://index.docker.io/v1/ \
-  --docker-username="$CB_PLUGIN_USER" --docker-password="$CB_PLUGIN_TOKEN"
+  --docker-server="$REGISTRY" \
+  --docker-username="$REG_USER" --docker-password="$TENSORMESH_API_KEY"
 
 # --- TMO chart (CacheBlend on; engine+coordinator off) ------------------------
-log "helm install tensormesh-operator ($CHART_VERSION)"
-helm registry login ghcr.io -u "$TMO_GHCR_USER" --password-stdin <<<"$TMO_GHCR_TOKEN"
+log "helm install tensormesh-operator ($CHART_VERSION) from $REGISTRY"
+helm registry login "$REGISTRY" --username "$REG_USER" --password-stdin <<<"$TENSORMESH_API_KEY"
 helm upgrade --install tensormesh-operator \
-  oci://ghcr.io/tensormesh-production/charts/tensormesh-operator \
+  "oci://$REGISTRY/tensormesh-production/charts/tensormesh-operator" \
   --version "$CHART_VERSION" -n "$NS_OP" --create-namespace \
   -f "$MF/tmo-cacheblend-values.yaml" --wait --timeout 15m
 
