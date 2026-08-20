@@ -4,17 +4,13 @@
 # `git clone`s this repo; the launchable injects the tokens as env vars (nothing baked here).
 #
 # Required env (set via the launchable's env-var field):
-#   CB_PLUGIN_TOKEN   Docker Hub read token for tensormesh/cacheblend-plugin
-#   TMO_GHCR_TOKEN    GHCR read:packages token for the chart
-#   TMO_GHCR_USER     GHCR username
-#   NGC_API_KEY       NVIDIA NGC key for the NeMo Retriever NIMs
+#   TENSORMESH_API_KEY  tm_... key for artifacts.tensormesh.ai (private chart + plugin image)
+#   NGC_API_KEY         NVIDIA NGC key (NGC Catalog) for the NeMo Retriever NIMs
 set -eu
 
-: "${CB_PLUGIN_TOKEN:?set via launchable env field}"
-: "${TMO_GHCR_TOKEN:?set via launchable env field}"
-: "${TMO_GHCR_USER:?set via launchable env field}"
+: "${TENSORMESH_API_KEY:?set via launchable env field}"
 : "${NGC_API_KEY:?set via launchable env field}"
-export CB_PLUGIN_TOKEN TMO_GHCR_TOKEN TMO_GHCR_USER NGC_API_KEY
+export TENSORMESH_API_KEY NGC_API_KEY
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "=== RAG backend bootstrap $(date -u +%FT%TZ) ==="

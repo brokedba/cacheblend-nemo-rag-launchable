@@ -1,5 +1,13 @@
 # TMO Helm chart values — CacheBlend ON, engine+coordinator OFF (single blend server per node).
-# Chart: oci://ghcr.io/tensormesh-production/charts/tensormesh-operator  (pin the version in lib/02-engines.sh)
+# Chart: oci://artifacts.tensormesh.ai/tensormesh-production/charts/tensormesh-operator
+#        (version pinned in deploy/02-engines.sh)
+#
+# MATCHED VERSION TUPLE — keep in lockstep (mixing versions is unsupported):
+#   Helm chart  0.5.2   (CHART_VERSION in deploy/02-engines.sh)
+#   Operator    v0.5.2
+#   Cache engine v0.5.2 (CacheBlendEngine spec.image)
+#   Plugin      v0.5.2  (private, via the artifact proxy)
+#   vLLM serving lmcache/vllm-openai:v0.5.2 (config/manifests/engine-*.yaml)
 crds:
   enabled: true
 fullnameOverride: tensormesh-operator
@@ -16,8 +24,8 @@ coordinator: { enabled: false }
 
 operator:
   image:
-    repository: lmcache/lmcache-operator
-    tag: v0.5.0
+    repository: lmcache/lmcache-operator      # public (docker.io) — no auth
+    tag: v0.5.2
     pullPolicy: IfNotPresent
 
 cacheBlend:
@@ -30,16 +38,18 @@ cacheBlend:
     server:
       chunkSize: 256                 # FIXED at 256 (block_size 64 × 4)
     image:
-      repository: lmcache/vllm-openai
-      tag: v0.5.0
+      repository: lmcache/vllm-openai         # public (docker.io) — no auth
+      tag: v0.5.2
       pullPolicy: IfNotPresent
     blend:
       checkLayer: 2                  # validated at 2; gpt-oss model card suggests 1 — revisit if tuning
       recompRatio: 0.15
     injection:
       payloadImage:
-        repository: tensormesh/cacheblend-plugin
-        tag: v0.5.0                  # private image — pulled via the cacheblend-plugin-pull secret
+        # PRIVATE — served by the Tensormesh artifact proxy, pulled with the
+        # cacheblend-plugin-pull secret (x-access-token + TENSORMESH_API_KEY).
+        repository: artifacts.tensormesh.ai/tensormesh-production/images/cacheblend-plugin
+        tag: v0.5.2
         pullPolicy: IfNotPresent
       imagePullSecrets:
         - name: cacheblend-plugin-pull
