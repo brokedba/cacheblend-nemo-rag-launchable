@@ -45,10 +45,8 @@ UI wiring: `CACHEBLEND_LLM_URL` · `BASELINE_LLM_URL` · retriever `:7670`.
 
 | Var | For |
 | :--- | :--- |
-| `TENSORMESH_API_KEY` | `tm_...` key for **`artifacts.tensormesh.ai`** → private Helm chart + `cacheblend-plugin` image |
-| `NGC_API_KEY` | NVIDIA **NGC Catalog** key (`nvapi-...`) → the NeMo Retriever NIMs |
-
-> The artifact proxy takes the key as the password with the literal username **`x-access-token`** — one revocable key covers both the chart and the private image. Public OSS images (`lmcache/vllm-openai`, `lmcache/lmcache-operator`) come from `docker.io` unauthenticated.
+| `TENSORMESH_API_KEY` | Tensormesh artifact key (`tm_...`) |
+| `NGC_API_KEY` | NVIDIA NGC Catalog key (`nvapi-...`) |
 
 ---
 
