@@ -1,0 +1,44 @@
+# -----------------------------------------------------------------------------
+# NeMo Retriever — "Core RAG only" Helm override for the NeMo Retriever chart,
+# consumed by deploy/03-nemo.sh at runtime.
+#
+# Scope: retriever-service (CPU) + 4 core NIMs (page_elements, table_structure,
+# ocr, vlm_embed) + LanceDB. Reranker / answer-LLM / audio / parse = OFF
+# (answer generation runs against our external engines, not in-cluster).
+# -----------------------------------------------------------------------------
+nims:
+  enabled: true
+
+service:
+  replicas: 1
+  gpu:
+    enabled: false
+  installFfmpeg: false
+  resources:
+    requests: { cpu: "2", memory: 8Gi }
+    limits:   { cpu: "12", memory: 48Gi }
+
+serviceConfig:
+  server:
+    port: 7670
+  pipeline:
+    realtimeWorkers: 16
+    batchWorkers: 32
+  vectordb:
+    enabled: true
+    lancedbUri: /data/vectordb
+    embedModel: nvidia/llama-nemotron-embed-vl-1b-v2
+  llm:
+    enabled: false          # answer generation is external (our vLLM engines)
+
+nimOperator:
+  nimServiceGpuLimit: 1     # each core NIM requests 1 nvidia.com/gpu unit
+  page_elements:   { enabled: true }
+  table_structure: { enabled: true }
+  ocr:             { enabled: true }
+  vlm_embed:       { enabled: true }
+  rerankqa:        { enabled: false }
+  nemotron_parse:  { enabled: false }
+  nemotron_3_nano_omni_30b_a3b_reasoning: { enabled: false }
+  answer_llm:      { enabled: false }
+  audio:           { enabled: false }

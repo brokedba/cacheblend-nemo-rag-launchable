@@ -1,0 +1,58 @@
+# Optimized vLLM — APC + CacheBlend. The cacheblend-inject label + engine annotation make the
+# TMO mutating webhook rewrite this pod: it APPENDS --attention-backend CUSTOM, the CBKVConnector
+# --kv-transfer-config, eager cudagraph, PYTHONPATH/VLLM_PLUGINS + plugin init, and hostIPC.
+# Do NOT set those here, and NEVER add --disable-hybrid-kv-cache-manager (gpt-oss is SWA → needs it ON).
+# Runs on its OWN GPU alongside the baseline. CACHEBLEND_LLM_URL = http://gptoss20b:8000
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gptoss20b, namespace: cacheblend-workload, labels: { app: gptoss20b } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gptoss20b } }
+  template:
+    metadata:
+      labels:
+        app: gptoss20b
+        lmcache.ai/cacheblend-inject: "true"
+      annotations:
+        lmcache.ai/cacheblend-engine: "tensormesh-cacheblend"
+    spec:
+      tolerations: [{ key: is_gpu, operator: Exists, effect: NoSchedule }]
+      containers:
+        - name: vllm
+          image: lmcache/vllm-openai:v0.5.0
+          imagePullPolicy: IfNotPresent
+          # args-only (no command: override — the webhook skips those)
+          args:
+            - openai/gpt-oss-20b
+            - --served-model-name=openai/gpt-oss-20b
+            - --trust-remote-code
+            - --tensor-parallel-size=1
+            - --max-model-len=36864          # aligned with baseline for a fair A/B
+            - --max-num-seqs=4
+            - --max-num-batched-tokens=36864
+            - --gpu-memory-utilization=0.6
+            - --block-size=64
+            - --no-enable-chunked-prefill
+            - --no-async-scheduling
+            # APC left ON (removed the benchmark-isolation --no-enable-prefix-caching): APC + CacheBlend
+            # is the demo framing; APC does prefix reuse, CacheBlend adds non-prefix reuse.
+          env:
+            - { name: VLLM_USE_FLASHINFER_MOE_FP8, value: "0" }
+            - { name: LMCACHE_CHUNK_SIZE,          value: "256" }
+            - { name: LMCACHE_MAX_LOCAL_CPU_SIZE,  value: "60" }
+            - { name: LMCACHE_LMCACHE_INSTANCE_ID, value: "cb_gpt_oss_20b" }
+            - { name: LMCACHE_USE_LAYERWISE,       value: "False" }
+            - { name: HF_HUB_DISABLE_TELEMETRY,    value: "1" }
+          ports: [{ name: http, containerPort: 8000 }]
+          volumeMounts: [{ name: cache, mountPath: /root/.cache/huggingface }]
+          resources: { limits: { nvidia.com/gpu: "1", memory: 96Gi }, requests: { cpu: "4", memory: 32Gi } }
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 40 }
+      volumes:
+        - name: cache
+          hostPath: { path: /opt/hf-cache, type: DirectoryOrCreate }   # shared with baseline (pull once; HF file-locks the concurrent first pull)
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gptoss20b, namespace: cacheblend-workload }
+spec: { selector: { app: gptoss20b }, ports: [{ name: http, port: 8000, targetPort: http }] }

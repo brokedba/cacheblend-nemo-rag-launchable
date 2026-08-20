@@ -1,0 +1,46 @@
+# TMO Helm chart values — CacheBlend ON, engine+coordinator OFF (single blend server per node).
+# Chart: oci://ghcr.io/tensormesh-production/charts/tensormesh-operator  (pin the version in lib/02-engines.sh)
+crds:
+  enabled: true
+fullnameOverride: tensormesh-operator
+
+webhook:
+  enabled: true            # CacheBlend REQUIRES the mutating webhook (needs cert-manager)
+
+tests:
+  enabled: false
+
+# Offload engine + coordinator OFF — the CacheBlendEngine does both offload and blend on one node.
+engine:      { enabled: false }
+coordinator: { enabled: false }
+
+operator:
+  image:
+    repository: lmcache/lmcache-operator
+    tag: v0.5.0
+    pullPolicy: IfNotPresent
+
+cacheBlend:
+  enabled: true
+  name: tensormesh-cacheblend
+  namespace: cacheblend-workload
+  spec:
+    privileged: true
+    l1: { sizeGB: 40 }               # blend server L1 = HOST RAM (keep ≥ 1.25× working set to avoid eviction)
+    server:
+      chunkSize: 256                 # FIXED at 256 (block_size 64 × 4)
+    image:
+      repository: lmcache/vllm-openai
+      tag: v0.5.0
+      pullPolicy: IfNotPresent
+    blend:
+      checkLayer: 2                  # validated at 2; gpt-oss model card suggests 1 — revisit if tuning
+      recompRatio: 0.15
+    injection:
+      payloadImage:
+        repository: tensormesh/cacheblend-plugin
+        tag: v0.5.0                  # private image — pulled via the cacheblend-plugin-pull secret
+        pullPolicy: IfNotPresent
+      imagePullSecrets:
+        - name: cacheblend-plugin-pull
+      cudagraph: eager               # == --enforce-eager, injected into the vLLM args

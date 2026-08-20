@@ -1,0 +1,44 @@
+# Baseline vLLM — vanilla + APC, NO CacheBlend (no inject label → webhook leaves it alone).
+# Runs on its OWN GPU (dedicated) alongside the CacheBlend arm — no scale-toggle in the
+# converged demo; both serve at once. BASELINE_LLM_URL = http://gptoss20b-base:8000
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: gptoss20b-base, namespace: cacheblend-workload, labels: { app: gptoss20b-base } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: gptoss20b-base } }
+  template:
+    metadata:
+      labels: { app: gptoss20b-base }   # NO cacheblend-inject / no engine annotation = stays vanilla
+    spec:
+      tolerations: [{ key: is_gpu, operator: Exists, effect: NoSchedule }]
+      containers:
+        - name: vllm
+          image: lmcache/vllm-openai:v0.5.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - openai/gpt-oss-20b
+            - --served-model-name=openai/gpt-oss-20b
+            - --trust-remote-code
+            - --tensor-parallel-size=1
+            - --max-model-len=36864          # aligned with the CacheBlend arm for a fair A/B
+            - --max-num-seqs=4
+            - --max-num-batched-tokens=36864
+            - --gpu-memory-utilization=0.6
+            - --block-size=64
+            - --enforce-eager                # apples-to-apples with the eager CacheBlend arm
+            # APC is ON (vanilla baseline) — this is the "APC" in "APC vs APC+CacheBlend".
+          env:
+            - { name: HF_HUB_DISABLE_TELEMETRY, value: "1" }
+          ports: [{ name: http, containerPort: 8000 }]
+          volumeMounts: [{ name: cache, mountPath: /root/.cache/huggingface }]
+          resources: { limits: { nvidia.com/gpu: "1", memory: 96Gi }, requests: { cpu: "4", memory: 32Gi } }
+          readinessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 40 }
+      volumes:
+        - name: cache
+          hostPath: { path: /opt/hf-cache, type: DirectoryOrCreate }   # shared weight cache (pull once)
+---
+apiVersion: v1
+kind: Service
+metadata: { name: gptoss20b-base, namespace: cacheblend-workload }
+spec: { selector: { app: gptoss20b-base }, ports: [{ name: http, port: 8000, targetPort: http }] }
