@@ -42,11 +42,25 @@ log "waiting for blend server pod"
 until kubectl -n "$NS_WL" get pod -o name 2>/dev/null | grep -q cacheblend; do sleep 5; done
 BLEND=$(kubectl -n "$NS_WL" get pod -o name | grep cacheblend | head -1 || true)
 kubectl -n "$NS_WL" wait --for=condition=Ready "$BLEND" --timeout=900s
-# blend server MUST be on the CUDA backend (c_ops), not the CPU stub
+# Blend server MUST be on the CUDA backend, not the CPU stub (that's the driver tell).
+# The banner wording is VERSION-DEPENDENT — match any variant, and BOUND the wait so a
+# future wording change degrades into a timeout instead of hanging forever (0.5.3 hung here):
+#   <=0.5.2 : "Using backend: lmcache.c_ops"          (lmcache/__init__.py)
+#   0.5.3   : "torch_device_type=cuda" / "CudaPinMemoryBackend" / "accelerator available: True"
+#             (lmcache.v1.platform._device_detect) — the "Using backend" line is GONE
+CUDA_OK='Using backend: lmcache\.c_ops|torch_device_type=cuda|CudaPinMemoryBackend|accelerator available: True'
+CPU_BAD='StubCPUDevice|torch_device_type=cpu|accelerator available: False'
+ok=0
 for try in 1 2; do
-  until kubectl -n "$NS_WL" logs "$BLEND" 2>/dev/null | grep -qE "Using backend|Skipping backend lmcache.c_ops"; do sleep 5; done
-  kubectl -n "$NS_WL" logs "$BLEND" | grep -q "Using backend: lmcache.c_ops" && { log "blend server on c_ops OK"; break; }
-  [ "$try" = 2 ] && { echo "FATAL: blend server stuck on CPU stub — driver?"; exit 1; }
+  for i in $(seq 1 60); do          # 60 x 5s = 5 min per attempt, then recycle/fail
+    L="$(kubectl -n "$NS_WL" logs "$BLEND" 2>/dev/null || true)"
+    echo "$L" | grep -qE "$CUDA_OK" && { ok=1; break; }
+    echo "$L" | grep -qE "$CPU_BAD" && break
+    sleep 5
+  done
+  [ "$ok" = 1 ] && { log "blend server on the CUDA backend OK"; break; }
+  [ "$try" = 2 ] && { echo "FATAL: blend server never reported a CUDA backend (CPU stub / driver?)"; exit 1; }
+  log "blend server not on CUDA (attempt $try) — recycling pod"
   kubectl -n "$NS_WL" delete "$BLEND"; sleep 10
   BLEND=$(kubectl -n "$NS_WL" get pod -o name | grep cacheblend | head -1 || true)
   kubectl -n "$NS_WL" wait --for=condition=Ready "$BLEND" --timeout=600s
