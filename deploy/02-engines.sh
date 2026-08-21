@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"; MF="$ROOT/conf
 NS_OP=tensormesh-operator; NS_WL=cacheblend-workload
 REGISTRY="${TENSORMESH_REGISTRY:-artifacts.tensormesh.ai}"
 REG_USER=x-access-token
-CHART_VERSION="${CHART_VERSION:-0.5.2}"
+CHART_VERSION="${CHART_VERSION:-0.5.3}"
 log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 
 # --- workload ns (privileged PSS: hostIPC) + private plugin pull secret --------

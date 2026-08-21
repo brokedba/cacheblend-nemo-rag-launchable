@@ -56,11 +56,11 @@ UI wiring: `CACHEBLEND_LLM_URL` · `BASELINE_LLM_URL` · retriever `:7670`.
 
 | Component | Version |
 | :--- | :--- |
-| Helm chart | `0.5.2` |
-| Operator | `v0.5.2` |
-| Cache engine | `v0.5.2` |
-| CacheBlend plugin | `v0.5.2` *(private, via the proxy)* |
-| vLLM serving image | `lmcache/vllm-openai:v0.5.2` |
+| Helm chart | `0.5.3` |
+| Operator | `v0.5.3` |
+| Cache engine | `v0.5.3` |
+| CacheBlend plugin | `v0.5.3` *(private, via the proxy)* |
+| vLLM serving image | `lmcache/vllm-openai:v0.5.3` |
 
 ---
 
