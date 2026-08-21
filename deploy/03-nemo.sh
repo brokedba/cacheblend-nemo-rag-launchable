@@ -11,21 +11,35 @@ NEMO_BRANCH="${NEMO_BRANCH:-brev-launchable}"
 NEMO_DIR="${NEMO_DIR:-/tmp/nemo-retriever}"
 log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 
-# --- GPU time-slicing so the 4 NIMs fit on the retrieval GPU(s) ---------------
-# NOTE (open item): node-wide slicing — see manifests/gpu-timeslicing.yaml header.
-# For a clean engine A/B this must be scoped to the NeMo GPU only; TODO before benchmarking.
-log "applying GPU time-slicing config"
-kubectl apply -f "$MF/gpu-timeslicing.yaml"
-# point the GPU-Operator device-plugin at it (microk8s ships the operator via Brev).
-kubectl -n gpu-operator patch clusterpolicy/cluster-policy --type merge \
-  -p '{"spec":{"devicePlugin":{"config":{"name":"time-slicing-config","default":"any"}}}}' 2>/dev/null \
-  || echo "  (could not patch clusterpolicy — verify the device-plugin picks up the time-slicing config)"
-log "waiting for time-sliced nvidia.com/gpu units"
+# --- GPU time-slicing so the 4 NIMs can schedule ------------------------------
+# The GPU Operator namespace and ClusterPolicy name are DISCOVERED, not assumed — Brev's
+# microk8s image uses `gpu-operator-resources`, not `gpu-operator`.
+GPU_NS="$(kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' \
+          | awk '/nvidia-device-plugin/{print $1; exit}')"
+[ -n "$GPU_NS" ] || { echo "FATAL: no nvidia-device-plugin pod found — is the GPU Operator installed?"; exit 1; }
+CP="$(kubectl get clusterpolicy -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+log "GPU Operator ns=$GPU_NS clusterpolicy=${CP:-<none>}"
+
+GPU_BEFORE="$(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"
+log "applying GPU time-slicing config (allocatable now: ${GPU_BEFORE:-?})"
+kubectl -n "$GPU_NS" apply -f "$MF/gpu-timeslicing.yaml"
+
+if [ -n "$CP" ]; then
+  kubectl patch clusterpolicy "$CP" --type merge \
+    -p '{"spec":{"devicePlugin":{"config":{"name":"time-slicing-config","default":"any"}}}}'
+else
+  # No ClusterPolicy (standalone device plugin): point it at the ConfigMap directly.
+  kubectl -n "$GPU_NS" set env ds/nvidia-device-plugin-daemonset CONFIG_FILE=/config/any || \
+    echo "  (no clusterpolicy and could not configure the standalone device plugin — check it manually)"
+fi
+
+log "waiting for the device plugin to re-advertise more units than ${GPU_BEFORE:-?}"
 for i in $(seq 1 30); do
-  kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}' | grep -qE '[2-9]|[0-9]{2,}' && break
+  NOW="$(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"
+  [ -n "$NOW" ] && [ "${NOW:-0}" -gt "${GPU_BEFORE:-0}" ] && break
   sleep 10
 done
-kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}'; echo
+echo "allocatable nvidia.com/gpu: $(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"
 
 # --- NIM Operator (reconciles NIMCache/NIMService CRDs) -----------------------
 log "installing NVIDIA NIM Operator"

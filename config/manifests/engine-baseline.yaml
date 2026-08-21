@@ -14,7 +14,7 @@ spec:
       tolerations: [{ key: is_gpu, operator: Exists, effect: NoSchedule }]
       containers:
         - name: vllm
-          image: lmcache/vllm-openai:v0.5.2
+          image: lmcache/vllm-openai:v0.5.3
           imagePullPolicy: IfNotPresent
           args:
             - openai/gpt-oss-20b

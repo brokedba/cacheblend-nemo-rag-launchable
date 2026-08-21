@@ -1,27 +1,21 @@
-# GPU time-slicing for the NeMo NIMs.
+# GPU time-slicing config for the NeMo NIMs.
 #
-# WHY: NeMo's 4 core NIMs each request `nvidia.com/gpu: 1`. To fit them on the GPU(s)
-# we reserve for retrieval (they're ~4.8 GiB combined), the physical GPU must advertise
-# several schedulable units → time-slicing.
+# WHY: NeMo's 4 core NIMs each request `nvidia.com/gpu: 1`, but the two engine arms already
+# hold 2 of the 4 physical GPUs — so without slicing the NIMs cannot all schedule. Slicing
+# makes each physical GPU advertise several schedulable units (the NIMs are ~4.8 GiB total).
 #
-# ⚠️ OPEN ITEM — engine isolation. This ConfigMap is NODE-WIDE: with the default
-# GPU-Operator device-plugin it slices EVERY GPU on the node ×replicas. That is fine to
-# get the stack UP, but it breaks the clean baseline-vs-CacheBlend A/B: the two engine
-# pods could land as fractional slices on the same physical card and contend.
+# NOTE: no `namespace:` here on purpose — deploy/03-nemo.sh discovers the GPU Operator's
+# namespace at runtime (it is NOT always `gpu-operator`; Brev's microk8s image uses
+# `gpu-operator-resources`) and applies this with `-n "$GPU_NS"`.
 #
-# For the RIGOROUS benchmark, the engines need WHOLE, dedicated GPUs. Options to sort
-# before benchmarking (not blocking for a functional bring-up):
-#   1. Per-GPU time-slicing — apply this config ONLY to the NeMo GPU(s) via a device-plugin
-#      per-node config keyed by a node label; leave the engine GPUs un-sliced.
-#   2. MPS instead of time-slicing for the NIM GPU.
-#   3. Schedule the engines with a nodeSelector/affinity that pins them off the sliced GPU.
-# Tracking this as the one GPU-scheduling work item; lib/03-nemo.sh applies the node-wide
-# version below so NeMo comes up.
+# ISOLATION CAVEAT: the device-plugin config is per-NODE, so on a single-node cluster this
+# slices ALL GPUs — placement of the engine pods is then not pinned to a whole card. Fine for
+# a functional bring-up; for the rigorous baseline-vs-CacheBlend benchmark, scale the NeMo
+# NIMs down first so the engines are the only GPU consumers.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: time-slicing-config
-  namespace: gpu-operator
 data:
   any: |-
     version: v1
@@ -31,4 +25,4 @@ data:
       timeSlicing:
         resources:
         - name: nvidia.com/gpu
-          replicas: 4        # enough units for the 4 NIMs; raise if you also colocate spares
+          replicas: 4        # units per physical GPU — 4 is enough for the 4 core NIMs
