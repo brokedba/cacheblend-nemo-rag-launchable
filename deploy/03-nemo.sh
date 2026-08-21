@@ -4,6 +4,17 @@
 # (Brev microk8s already provides the GPU runtime). Consumes env: NGC_API_KEY.
 set -eu
 
+# Guard here too (not just in bootstrap.sh) so running this step standalone fails fast:
+# set -u does NOT catch a set-but-EMPTY var, and an empty key surfaces later as a confusing
+# chart error ("ngcImagePullSecret.password required when create=true").
+: "${NGC_API_KEY:?empty or unset — export your NGC Catalog key (nvapi-...) before running this step}"
+# Shape check: a wrong-but-non-empty value (e.g. pasting the key's *description* from the NGC
+# console) installs fine and only surfaces ~20 min later as 401 Unauthorized on the NIM pulls.
+case "$NGC_API_KEY" in
+  nvapi-*) : ;;
+  *) echo "FATAL: NGC_API_KEY must start with 'nvapi-' (got ${#NGC_API_KEY} chars). Paste the KEY, not its description."; exit 1 ;;
+esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"; MF="$ROOT/config/manifests"
 NS=retriever; RELEASE=retriever
 NEMO_REPO="${NEMO_REPO:-https://github.com/yiwzhao/NeMo-Retriever.git}"   # NeMo Retriever chart source (overridable)
@@ -33,13 +44,19 @@ else
     echo "  (no clusterpolicy and could not configure the standalone device plugin — check it manually)"
 fi
 
-log "waiting for the device plugin to re-advertise more units than ${GPU_BEFORE:-?}"
+# Expected units = physical GPUs x replicas. Comparing against EXPECTED (not "more than
+# before") makes this idempotent — on a re-run where slicing is already applied it exits
+# immediately instead of waiting out the whole loop.
+PHYS="$(nvidia-smi -L | grep -c '^GPU')"
+REPLICAS="$(awk '/replicas:/{print $2; exit}' "$MF/gpu-timeslicing.yaml")"
+EXPECT=$(( PHYS * ${REPLICAS:-1} ))
+log "waiting for allocatable nvidia.com/gpu to reach $EXPECT (${PHYS} GPUs x ${REPLICAS:-1})"
 for i in $(seq 1 30); do
   NOW="$(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"
-  [ -n "$NOW" ] && [ "${NOW:-0}" -gt "${GPU_BEFORE:-0}" ] && break
+  [ -n "$NOW" ] && [ "${NOW:-0}" -ge "$EXPECT" ] && break
   sleep 10
 done
-echo "allocatable nvidia.com/gpu: $(kubectl get nodes -o jsonpath='{.items[0].status.allocatable.nvidia\.com/gpu}')"
+echo "allocatable nvidia.com/gpu: ${NOW:-unknown} (expected $EXPECT)"
 
 # --- NIM Operator (reconciles NIMCache/NIMService CRDs) -----------------------
 log "installing NVIDIA NIM Operator"
