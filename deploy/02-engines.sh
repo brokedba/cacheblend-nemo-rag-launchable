@@ -87,3 +87,36 @@ kubectl apply -f "$MF/engine-baseline.yaml"
 kubectl -n "$NS_WL" rollout status deploy/gptoss20b       --timeout=1800s
 kubectl -n "$NS_WL" rollout status deploy/gptoss20b-base  --timeout=1800s
 log "engines up — CacheBlend=svc/gptoss20b:8000  baseline=svc/gptoss20b-base:8000"
+
+# --- warm-up: land one real query so the instance REGISTERS with lmcache -------
+# lmcache reaps IDLE workers (`lmcache-mp-worker-reaper`, 30s interval), so a stack that
+# deploys and then sits untouched can lose its registration (~1h observed). Doing it HERE,
+# right after the engines come up, means the long NeMo phase never runs against a cold
+# instance. The prompt MUST cross server.chunkSize (256) or the MP store never fires and
+# the engine looks "up" with a cache path that was never exercised (~2800 tok ≈ 11 chunks).
+log "warm-up: registering the engine with lmcache (the MP store must fire)"
+python3 -c "
+import json
+print(json.dumps({'model':'openai/gpt-oss-20b',
+                  'prompt':'The quick brown fox jumps over the lazy dog. ' * 300,
+                  'max_tokens':8,'temperature':0}))" > /tmp/warm.json
+
+kubectl -n "$NS_WL" port-forward svc/gptoss20b 8010:8000 >/dev/null 2>&1 & PF=$!
+sleep 5
+S0="$(kubectl -n "$NS_WL" logs "$BLEND" 2>/dev/null | grep -c 'Stored .* tokens' || true)"
+if curl -sf http://localhost:8010/v1/models 2>/dev/null | grep -q gpt-oss-20b; then
+  T="$(curl -sf -o /dev/null -w '%{time_total}' http://localhost:8010/v1/completions \
+        -H 'content-type: application/json' -d @/tmp/warm.json 2>/dev/null || true)"
+  [ -n "${T:-}" ] && echo "  served a ~2800-tok completion in ${T}s" \
+                  || echo "  WARN: completion not served"
+else
+  echo "  WARN: model not registered on :8010"
+fi
+sleep 3
+S1="$(kubectl -n "$NS_WL" logs "$BLEND" 2>/dev/null | grep -c 'Stored .* tokens' || true)"
+if [ "${S1:-0}" -gt "${S0:-0}" ]; then
+  echo "  MP store fired — $((S1 - S0)) new \"Stored\" events on the blend server"
+else
+  echo "  WARN: no new \"Stored\" events — cache path not exercised (connector down?)"
+fi
+kill "$PF" 2>/dev/null || true

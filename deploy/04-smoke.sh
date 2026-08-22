@@ -73,7 +73,11 @@ ctx = "\n\n".join(h["text"] for h in hits)
 msgs = [{"role": "system", "content": "Answer only from the provided context."},
         {"role": "user",   "content": f"Context:\n{ctx}\n\nQuestion: {Q}"}]
 
-for name, port in (("baseline", 8011), ("cacheblend", 8010)):
+# Availability check, not a perf or blend check — the UI needs BOTH urls to answer.
+# Narrow it with e.g. SMOKE_ARMS="baseline" if you only want the simplest proof.
+ARMS = {"baseline": 8011, "cacheblend": 8010}
+want = os.environ.get("SMOKE_ARMS", "baseline cacheblend").split()
+for name, port in [(a, ARMS[a]) for a in want if a in ARMS]:
     try:
         t0 = time.time()
         a = jpost(f"http://localhost:{port}/v1/chat/completions",
