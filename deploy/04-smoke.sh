@@ -75,7 +75,9 @@ snippet = " ".join(hits[0]["text"].split())[:64]
 print(f'  retrieve   {len(hits)} hits, top d={hits[0].get("_distance", float("nan")):.3f} | "{snippet}..."')
 
 ctx = "\n\n".join(h["text"] for h in hits)
-msgs = [{"role": "system", "content": "Answer only from the provided context."},
+# Ask for a terse answer: with --enforce-eager the engines decode at ~11 tok/s, so a
+# chatty reply adds seconds and makes run-to-run timings look like cache differences.
+msgs = [{"role": "system", "content": "Answer using only the provided context. Reply with as few words as possible."},
         {"role": "user",   "content": f"Context:\n{ctx}\n\nQuestion: {Q}"}]
 
 # Availability check, not a perf or blend check — the UI needs BOTH urls to answer.
@@ -85,14 +87,26 @@ want = os.environ.get("SMOKE_ARMS", "baseline cacheblend").split()
 for name, port in [(a, ARMS[a]) for a in want if a in ARMS]:
     try:
         t0 = time.time()
+        # temperature 0 + fixed seed: without these the same prompt returns prose one run
+        # and JSON the next, and the timing difference is just answer length, not cache.
+        # max_tokens MUST stay generous: gpt-oss is a REASONING model — it spends tokens in
+        # `reasoning` first, and a tight budget leaves `content: null` (looks like a failure
+        # on a perfectly healthy engine). 256 is the floor, not a tuning knob.
         a = jpost(f"http://localhost:{port}/v1/chat/completions",
-                  {"model": "openai/gpt-oss-20b", "messages": msgs, "max_tokens": 256}, timeout=180)
+                  {"model": "openai/gpt-oss-20b", "messages": msgs, "max_tokens": 256,
+                   "temperature": 0, "seed": 42}, timeout=180)
         dt = time.time() - t0
-        ans = " ".join((a["choices"][0]["message"].get("content") or "").split())
-        # Substring match, not equality: the model may answer as prose or as JSON
-        # (both seen for the same prompt), so assert on content.
+        m = a["choices"][0]["message"]
+        ans = " ".join((m.get("content") or "").split())
+        if not ans and m.get("reasoning"):
+            ans = "(empty content — answer stayed in `reasoning`; raise max_tokens)"
+        # completion_tokens counts reasoning + content, which is why it varies more than
+        # the visible answer length suggests.
+        out = (a.get("usage") or {}).get("completion_tokens", "?")
+        # Substring match, not equality: the model may answer as prose or as JSON,
+        # so assert on content.
         hit = (not EXPECT) or (EXPECT in ans.lower())
-        print(f'  generate   {name:<10} ({dt:.1f}s) {"OK   " if hit else "WRONG"} -> "{ans[:80]}"')
+        print(f'  generate   {name:<10} ({dt:.1f}s, {out} tok) {"OK   " if hit else "WRONG"} -> "{ans[:80]}"')
         (ok if hit else wrong).append(name)
     except Exception:
         print(f"  generate   {name:<10} SKIP (endpoint not serving)")
