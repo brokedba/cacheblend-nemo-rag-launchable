@@ -80,6 +80,13 @@ ctx = "\n\n".join(h["text"] for h in hits)
 msgs = [{"role": "system", "content": "Answer using only the provided context. Reply with as few words as possible."},
         {"role": "user",   "content": f"Context:\n{ctx}\n\nQuestion: {Q}"}]
 
+# Sampling is pinned and IDENTICAL on both arms — otherwise the same prompt returns prose
+# one run and JSON the next, and the timing gap is just answer length. max_tokens stays
+# generous because gpt-oss spends tokens in `reasoning` before emitting `content`.
+# One dict so the line we print can never drift from what we actually send.
+GEN = {"max_tokens": 256, "temperature": 0, "seed": 42}
+print("  sampling   " + " ".join(f"{k}={v}" for k, v in GEN.items()) + "  (identical on both arms)")
+
 # Availability check, not a perf or blend check — the UI needs BOTH urls to answer.
 # Narrow it with e.g. SMOKE_ARMS="baseline" if you only want the simplest proof.
 ARMS = {"baseline": 8011, "cacheblend": 8010}
@@ -89,12 +96,8 @@ for name, port in [(a, ARMS[a]) for a in want if a in ARMS]:
         t0 = time.time()
         # temperature 0 + fixed seed: without these the same prompt returns prose one run
         # and JSON the next, and the timing difference is just answer length, not cache.
-        # max_tokens MUST stay generous: gpt-oss is a REASONING model — it spends tokens in
-        # `reasoning` first, and a tight budget leaves `content: null` (looks like a failure
-        # on a perfectly healthy engine). 256 is the floor, not a tuning knob.
         a = jpost(f"http://localhost:{port}/v1/chat/completions",
-                  {"model": "openai/gpt-oss-20b", "messages": msgs, "max_tokens": 256,
-                   "temperature": 0, "seed": 42}, timeout=180)
+                  {"model": "openai/gpt-oss-20b", "messages": msgs, **GEN}, timeout=180)
         dt = time.time() - t0
         m = a["choices"][0]["message"]
         ans = " ".join((m.get("content") or "").split())
