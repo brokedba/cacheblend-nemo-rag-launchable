@@ -18,6 +18,7 @@ echo "=== RAG backend bootstrap $(date -u +%FT%TZ) ==="
 bash "$HERE/deploy/01-cluster.sh"     # driver sanity + microk8s + cert-manager
 bash "$HERE/deploy/02-engines.sh"     # TMO operator + CacheBlend + baseline (svc :8000 each)
 bash "$HERE/deploy/03-nemo.sh"        # NeMo Retriever core (svc :7670)
+bash "$HERE/deploy/04-smoke.sh"       # E2E proof: ingest -> retrieve -> generate (non-fatal)
 
 cat <<EOF
 

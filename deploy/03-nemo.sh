@@ -82,4 +82,34 @@ helm upgrade --install "$RELEASE" "$NEMO_DIR/nemo_retriever/helm" \
   --wait --timeout 30m || echo "  helm --wait timed out (NIM weight downloads are slow) — continuing to status"
 
 kubectl get nimcache,nimservice,pods -n "$NS" || true
+
+# --- wait for the NIMs, then prove the API actually serves --------------------
+# First-run NIMCache reconciliation downloads model weights to PVCs (~20 min observed for
+# the 4 core NIMs), so poll rather than assume. Non-fatal: a timeout warns and moves on.
+log "waiting for all NIMServices to report Ready (first run downloads weights, ~20 min)"
+for i in $(seq 1 140); do          # 140 x 15s = 35 min
+  NOT_READY="$(kubectl -n "$NS" get nimservice --no-headers 2>/dev/null | awk '$2!="Ready"' | wc -l)"
+  [ "${NOT_READY:-1}" -eq 0 ] && { log "all NIMServices Ready"; break; }
+  sleep 15
+done
+kubectl -n "$NS" get nimcache,nimservice || true
+
+log "health check on the retriever API"
+H=""
+kubectl -n "$NS" port-forward "svc/${RELEASE}-nemo-retriever" 7670:7670 >/dev/null 2>&1 &
+PF=$!
+trap 'kill "$PF" 2>/dev/null || true' EXIT
+sleep 3
+for i in $(seq 1 24); do           # 24 x 5s = 2 min
+  H="$(curl -fsS http://localhost:7670/v1/health 2>/dev/null || true)"
+  case "$H" in *'"status":"ok"'*) break ;; esac
+  sleep 5
+done
+kill "$PF" 2>/dev/null || true
+trap - EXIT
+case "$H" in
+  *'"status":"ok"'*) log "retriever healthy: $H" ;;
+  *) echo "  WARNING: /v1/health did not return ok (got: '${H:-no response}') — check: kubectl -n $NS get pods" ;;
+esac
+
 log "NeMo Retriever service = svc/${RELEASE}-nemo-retriever:7670 (ns/$NS)"
