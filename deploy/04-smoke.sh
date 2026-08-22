@@ -10,10 +10,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 NS_R="${NS_R:-retriever}"; NS_W="${NS_W:-cacheblend-workload}"; RELEASE="${RELEASE:-retriever}"
 PDF="${SMOKE_PDF:-${NEMO_DIR:-/tmp/nemo-retriever}/data/multimodal_test.pdf}"
 Q="${SMOKE_QUERY:-Which animal is jumping onto a laptop?}"
+# Known-good answer for the default PDF/query — makes PASS mean "answered CORRECTLY"
+# rather than merely "answered". Override together with SMOKE_QUERY/SMOKE_PDF.
+EXPECT="${SMOKE_EXPECT:-cat}"
 log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 
 log "E2E smoke: ingest -> retrieve -> generate"
 [ -f "$PDF" ] || { echo "  SKIP: no test PDF at $PDF"; exit 0; }
+printf '  query      "%s"  (expect: %s)\n' "$Q" "$EXPECT"
 
 # Local ports: 8001 is Headlamp on Brev's image — never bind it.
 kubectl -n "$NS_R" port-forward "svc/${RELEASE}-nemo-retriever" 7670:7670 >/dev/null 2>&1 & PF1=$!
@@ -47,7 +51,7 @@ else
 fi
 
 # --- 2. retrieve + 3. generate on every arm that answers ---------------------
-Q="$Q" python3 - <<'PY'
+Q="$Q" EXPECT="$EXPECT" python3 - <<'PY'
 import json, os, time, urllib.request
 
 def jpost(url, body, timeout=180):
@@ -57,7 +61,8 @@ def jpost(url, body, timeout=180):
         return json.load(f)
 
 Q = os.environ['Q']
-ok = []
+EXPECT = os.environ.get('EXPECT', '').strip().lower()
+ok, wrong = [], []
 
 try:
     hits = jpost("http://localhost:7670/v1/query", {"query": Q, "top_k": 3})["results"][0]["hits"]
@@ -67,7 +72,7 @@ if not hits:
     print("  FAIL  retrieve: 0 hits"); raise SystemExit(0)
 
 snippet = " ".join(hits[0]["text"].split())[:64]
-print(f'  retrieve   top hit d={hits[0].get("_distance", float("nan")):.3f} | "{snippet}..."')
+print(f'  retrieve   {len(hits)} hits, top d={hits[0].get("_distance", float("nan")):.3f} | "{snippet}..."')
 
 ctx = "\n\n".join(h["text"] for h in hits)
 msgs = [{"role": "system", "content": "Answer only from the provided context."},
@@ -83,11 +88,22 @@ for name, port in [(a, ARMS[a]) for a in want if a in ARMS]:
         a = jpost(f"http://localhost:{port}/v1/chat/completions",
                   {"model": "openai/gpt-oss-20b", "messages": msgs, "max_tokens": 256}, timeout=180)
         dt = time.time() - t0
-        ans = " ".join((a["choices"][0]["message"].get("content") or "").split())[:80]
-        print(f'  generate   {name:<10} ({dt:.1f}s) -> "{ans}"')
-        ok.append(name)
+        ans = " ".join((a["choices"][0]["message"].get("content") or "").split())
+        # Substring match, not equality: the model may answer as prose or as JSON
+        # (both seen for the same prompt), so assert on content.
+        hit = (not EXPECT) or (EXPECT in ans.lower())
+        print(f'  generate   {name:<10} ({dt:.1f}s) {"OK   " if hit else "WRONG"} -> "{ans[:80]}"')
+        (ok if hit else wrong).append(name)
     except Exception:
         print(f"  generate   {name:<10} SKIP (endpoint not serving)")
 
-print(f'\n  RESULT     {"PASS - RAG loop verified end to end on: " + ", ".join(ok) if ok else "FAIL - retrieval OK but no engine answered"}')
+if ok:
+    msg = f'PASS - correct answer ("{EXPECT}") from: ' + ", ".join(ok)
+    if wrong:
+        msg += f' | WRONG from: ' + ", ".join(wrong)
+elif wrong:
+    msg = 'FAIL - engines answered but none contained the expected answer: ' + ", ".join(wrong)
+else:
+    msg = 'FAIL - retrieval OK but no engine answered'
+print(f'\n  RESULT     {msg}')
 PY
