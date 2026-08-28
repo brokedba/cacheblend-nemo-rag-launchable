@@ -30,7 +30,7 @@ Fresh 4× RTX PRO 6000 node, empty caches, `0.5.3` tuple. **~31 min end to end**
 | Retriever serving | `retriever healthy: {"status":"ok","mode":"standalone"}` |
 | RAG loop correct | `PASS - correct answer ("cat") from: baseline, cacheblend` |
 
-> ⚠️ **Generate times are not a benchmark.** At ~363 prompt tokens CacheBlend has nothing to reuse, and both engines run `--enforce-eager` (~11 tok/s decode), so timings track answer length and cold-request effects. They have landed on either side across runs. Measure with a real corpus and the LDP harness.
+> ⚠️ **Don't read the generate times as a benchmark.** The smoke prompt is only ~363 tokens, so CacheBlend has almost nothing to reuse — the timings mostly reflect how long each answer happened to be. Which arm looks faster has flipped between runs. Real numbers need a large corpus and the LDP benchmark harness.
 
 ---
 
