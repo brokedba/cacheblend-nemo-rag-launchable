@@ -22,6 +22,8 @@
 │   │   └── gpu-timeslicing.yaml          # time-slice config for the NeMo GPU
 │   └── nemo/
 │       └── values-brev-core.yaml         # NeMo Retriever "core RAG" chart values
+├── docs/
+│   └── VALIDATION.md                     # reference run + failure modes the scripts handle
 └── README.md                             # ← you are here
 ```
 
