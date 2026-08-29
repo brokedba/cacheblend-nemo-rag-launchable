@@ -96,6 +96,26 @@ What each line in the `05-tryit-ui` uvicorn log means:
 
 ---
 
+## 🎯 CacheBlend metrics live on the blend server (`:8080`), not vLLM
+
+The compare UI derives Blend% from vLLM's `external_prefix_cache_hits_total` — which **never increments** under `CBKVConnector` (blended KV is injected mid-sequence, not claimed as prefix). The real counters are on the lmcache server's HTTP port:
+
+```
+lmcache_mp_l1_write_chunks_total   2118    ← stores
+lmcache_mp_l1_read_chunks_total     198    ← actual blend reuse
+lmcache_mp_l1_evicted_chunks_total  411    ← evictions (TTL, see below)
+```
+
+📌 Blend% is rescuable with current images: per-request **delta** of `l1_read_chunks_total` (after − before) × 256 (chunk size) ÷ prompt tokens = true reuse fraction.
+
+📌 **Stored KV has a TTL.** `GET :8080/status` → `write_ttl_seconds: 600`, `read_ttl_seconds: 300` — L1 entries expire ~10 min after write (observed: 7/7 keys retained at +5 min → 1/6 with 5 "stale" at +10 min; evictions fire at 67% usage, well under the 0.8 watermark, so it's TTL, not pressure). **Any precompute must land within ~10 min of the queries it serves**, until the TTL is configurable/pinnable.
+
+📌 Useful `:8080` endpoints: `GET /status` (L1 occupancy, TTLs), `GET /cache/objects` (what's stored), `POST /cache/clear` (clean cold/warm resets without redeploying), `POST /metrics/reset`.
+
+Other UI metric caveats: **APC hit%** is a lifetime cumulative ratio (precompute traffic dilutes one arm — compare per-request deltas instead); **TTFT** counts to the first *content* token, so for reasoning models it includes the whole reasoning phase.
+
+---
+
 ## 🔍 Verification commands
 
 ```bash
