@@ -108,6 +108,8 @@ lmcache_mp_l1_evicted_chunks_total  411    ← evictions (TTL, see below)
 
 📌 Blend% is rescuable with current images: per-request **delta** of `l1_read_chunks_total` (after − before) × 256 (chunk size) ÷ prompt tokens = true reuse fraction.
 
+📌 **Cross-checked** (25-q FinQA run): the blend server's `CB sparse classify` totals (`21 found of 73 submitted` ≈ 29%) independently match the counter-delta blend ratio (24.7%) — two measurement paths, same number.
+
 📌 **Stored KV has a TTL.** `GET :8080/status` → `write_ttl_seconds: 600`, `read_ttl_seconds: 300` — L1 entries expire ~10 min after write (observed: 7/7 keys retained at +5 min → 1/6 with 5 "stale" at +10 min; evictions fire at 67% usage, well under the 0.8 watermark, so it's TTL, not pressure). **Any precompute must land within ~10 min of the queries it serves**, until the TTL is configurable/pinnable.
 
 📌 Useful `:8080` endpoints: `GET /status` (L1 occupancy, TTLs), `GET /cache/objects` (what's stored), `POST /cache/clear` (clean cold/warm resets without redeploying), `POST /metrics/reset`.
