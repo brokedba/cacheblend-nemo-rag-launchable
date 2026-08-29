@@ -28,6 +28,21 @@ log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 WEBUI="$NEMO_DIR/deploy/brev/webui"
 [ -f "$WEBUI/app.py" ] || { echo "FATAL: $WEBUI/app.py not found"; exit 1; }
 
+# Strip the "Run your own experiments" JupyterLab section from the SERVED COPY only
+# (upstream untouched): its button is HARDCODED to the reference instance's dead
+# Jupyter tunnel, not driven by NOTEBOOK_URL. Keeps the nbHint div (her JS uses it).
+python3 - "$WEBUI/index.html" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+s2 = re.sub(r'<label[^>]*>4 · Run your own experiments</label>.*?</a>\s*</div>', '', s, flags=re.S)
+if s2 != s:
+    open(p, "w", encoding="utf-8").write(s2)
+    print("  stripped hardcoded JupyterLab section from index.html")
+else:
+    print("  (JupyterLab section not found — already stripped or upstream changed)")
+PY
+
 # --- venv (mirrors upstream setup.sh) -------------------------------------------------
 log "UI venv"
 python3 -c "import ensurepip" >/dev/null 2>&1 || {
