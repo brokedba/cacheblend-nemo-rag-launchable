@@ -29,7 +29,7 @@ WEBUI="$NEMO_DIR/deploy/brev/webui"
 [ -f "$WEBUI/app.py" ] || { echo "FATAL: $WEBUI/app.py not found"; exit 1; }
 # Reset the served copies to pristine so the patches below re-apply cleanly on every
 # run (otherwise an older patch version blocks the newer one via the idempotency guard).
-git -C "$NEMO_DIR" checkout -- deploy/brev/webui/index.html deploy/brev/webui/app.py 2>/dev/null || true
+git -C "$NEMO_DIR" checkout -- deploy/brev/webui/index.html deploy/brev/webui/app.py deploy/brev/webui/inference.py 2>/dev/null || true
 
 # Strip the "Run your own experiments" JupyterLab section from the SERVED COPY only
 # (upstream untouched): its button is HARDCODED to the reference instance's dead
@@ -136,6 +136,116 @@ open(p, "w", encoding="utf-8").write(s)
 print("  patched app.py: dataset ingest now precomputes the CacheBlend cache before 'done'")
 PY
 
+# Patch the SERVED COPY of inference.py — fixes the metric columns in BOTH the compare
+# tab and the inference benchmark (the benchmark consumes rag_stream()'s metrics event):
+#   * Blend %   : real counters live on the lmcache server (:8080 lmcache_mp_l1_*);
+#                 vLLM's external_prefix_cache_hits_total NEVER increments under
+#                 CBKVConnector. New value = per-request read/(read+write) chunk delta.
+#   * APC hit % : per-request delta instead of lifetime cumulative ratio (precompute
+#                 traffic dilutes one arm's lifetime number).
+#   * TTFT      : first delta of ANY kind — gpt-oss streams `reasoning` deltas before
+#                 `content`, so first-content TTFT measured verbosity, not prefill.
+# Payload keys are unchanged, so compare.html and the benchmark need no edits.
+python3 - "$WEBUI/inference.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+if "_kv_counters" in s:
+    print("  (inference.py metric patch already applied)")
+    raise SystemExit(0)
+ok = True
+
+# A) raw-counter helper (vLLM APC counters + lmcache L1 chunk counters)
+a = "def get_vllm_metrics(base_url: str) -> dict:"
+helper = '''LMCACHE_METRICS_URL = os.environ.get("LMCACHE_METRICS_URL", "http://localhost:8080/metrics")
+
+
+def _kv_counters(base_url: str) -> dict:
+    """(injected) Raw cumulative counters, scraped before/after a request for deltas."""
+    out = {"apc_q": 0.0, "apc_h": 0.0, "l1_r": 0.0, "l1_w": 0.0}
+    try:
+        for line in requests.get(f"{base_url}/metrics", timeout=5).text.splitlines():
+            if line.startswith("vllm:prefix_cache_queries_total"):
+                out["apc_q"] = float(line.split()[-1])
+            elif line.startswith("vllm:prefix_cache_hits_total"):
+                out["apc_h"] = float(line.split()[-1])
+    except Exception:  # noqa: BLE001
+        pass
+    if base_url == CACHEBLEND_LLM_URL:
+        try:
+            for line in requests.get(LMCACHE_METRICS_URL, timeout=5).text.splitlines():
+                if line.startswith("lmcache_mp_l1_read_chunks_total"):
+                    out["l1_r"] = float(line.split()[-1])
+                elif line.startswith("lmcache_mp_l1_write_chunks_total"):
+                    out["l1_w"] = float(line.split()[-1])
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+'''
+if a in s:
+    s = s.replace(a, helper + a, 1)
+else:
+    ok = False; print("  WARN: helper anchor missing")
+
+# B) capture counters just before generation starts
+b = "    # 2. Streaming generation"
+if b in s:
+    s = s.replace(b, "    _kv0 = _kv_counters(llm_url)\n\n" + b, 1)
+else:
+    ok = False; print("  WARN: pre-capture anchor missing")
+
+# C) TTFT on the first delta of any kind (reasoning included)
+c = '''                    try:
+                        delta = json.loads(data)["choices"][0]["delta"].get("content", "")
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if delta:
+                        if ttft_ms is None:
+                            ttft_ms = (time.time() - t_llm_start) * 1000
+                        token_count += 1'''
+c_new = '''                    try:
+                        _d = json.loads(data)["choices"][0]["delta"]
+                        delta = _d.get("content") or ""
+                    except Exception:  # noqa: BLE001
+                        continue
+                    if ttft_ms is None and (delta or _d.get("reasoning") or _d.get("reasoning_content")):
+                        ttft_ms = (time.time() - t_llm_start) * 1000
+                    if delta:
+                        token_count += 1'''
+if c in s:
+    s = s.replace(c, c_new, 1)
+else:
+    ok = False; print("  WARN: TTFT anchor missing")
+
+# D) overwrite the cumulative ratios with per-request deltas (same payload keys)
+d = "    vllm_metrics = get_vllm_metrics(llm_url)"
+d_new = '''    vllm_metrics = get_vllm_metrics(llm_url)
+    # (injected) per-request deltas — lifetime ratios mislead across arms
+    try:
+        _kv1 = _kv_counters(llm_url)
+        _dq = _kv1["apc_q"] - _kv0["apc_q"]
+        _dh = max(_kv1["apc_h"] - _kv0["apc_h"], 0.0)
+        if _dq > 0:
+            vllm_metrics["vllm:prefix_cache_hit_rate"] = round(_dh / _dq, 4)
+        _dr = max(_kv1["l1_r"] - _kv0["l1_r"], 0.0)
+        _dw = max(_kv1["l1_w"] - _kv0["l1_w"], 0.0)
+        if (_dr + _dw) > 0:
+            vllm_metrics["lmcache:blend_ratio"] = round(_dr / (_dr + _dw), 4)
+            vllm_metrics["lmcache:hit_ratio"] = vllm_metrics["lmcache:blend_ratio"]
+    except Exception:  # noqa: BLE001
+        pass'''
+if d in s:
+    s = s.replace(d, d_new, 1)
+else:
+    ok = False; print("  WARN: delta anchor missing")
+
+open(p, "w", encoding="utf-8").write(s)
+print("  patched inference.py: Blend% from lmcache :8080 deltas, APC% per-request, reasoning-aware TTFT"
+      + ("" if ok else " (PARTIAL — see warnings)"))
+PY
+
 # --- venv (mirrors upstream setup.sh) -------------------------------------------------
 log "UI venv"
 python3 -c "import ensurepip" >/dev/null 2>&1 || {
@@ -153,6 +263,9 @@ pgrep -f "port-forward.*gptoss20b-base" >/dev/null || \
   nohup kubectl -n "$NS_W" port-forward svc/gptoss20b-base 8011:8000 >/dev/null 2>&1 &
 pgrep -f "port-forward svc/gptoss20b 8010" >/dev/null || \
   nohup kubectl -n "$NS_W" port-forward svc/gptoss20b 8010:8000 >/dev/null 2>&1 &
+# blend server HTTP (:8080) — source of the real lmcache_mp_* counters for Blend%
+pgrep -f "port-forward svc/tensormesh-cacheblend" >/dev/null || \
+  nohup kubectl -n "$NS_W" port-forward svc/tensormesh-cacheblend 8080:8080 >/dev/null 2>&1 &
 sleep 4
 curl -sf http://localhost:7670/v1/health >/dev/null || echo "  WARN: retriever not answering on :7670 yet"
 
