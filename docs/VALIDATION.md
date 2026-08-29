@@ -112,6 +112,23 @@ lmcache_mp_l1_evicted_chunks_total  411    ← evictions (TTL, see below)
 
 📌 Useful `:8080` endpoints: `GET /status` (L1 occupancy, TTLs), `GET /cache/objects` (what's stored), `POST /cache/clear` (clean cold/warm resets without redeploying), `POST /metrics/reset`.
 
+### Blend % definition
+
+<details>
+<summary>Three candidate denominators — and which one this deployment uses</summary>
+
+The prompt is `system + retrieved chunks + question`. Only the **retrieved chunks** are blendable — the system prompt is prefix territory (APC's job) and the question is unique per request.
+
+| Blend % definition | Denominator | Reading |
+| :--- | :--- | :--- |
+| engine view | whole prompt tokens | "how much of prefill was served from cache" — ceiling < 100% (system + question never blend) |
+| RAG view | retrieved-context tokens only | "how much of the vector-DB fetch was reused" — ceiling 100% |
+| **this deployment** | `reads / (reads + writes)` chunk delta | "of the chunks lmcache touched this request, how many came from cache vs stored fresh" — computable from the two `:8080` counters alone, no tokenizer needed |
+
+At top_k=5 the retrieved context is ~90% of the prompt, so the definitions differ by a few points, not meaning. Under all three: **0% = cold store, high % = precompute consumed.**
+
+</details>
+
 Other UI metric caveats: **APC hit%** is a lifetime cumulative ratio (precompute traffic dilutes one arm — compare per-request deltas instead); **TTFT** counts to the first *content* token, so for reasoning models it includes the whole reasoning phase.
 
 ---
