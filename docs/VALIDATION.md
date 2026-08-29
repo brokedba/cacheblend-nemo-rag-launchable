@@ -57,6 +57,45 @@ All hit on real deploys. The silent ones are the dangerous ones.
 
 ---
 
+## 🗂️ One corpus, four representations
+
+What actually moves and lands where when the Quick Demo (299 FinQA PDFs) is ingested:
+
+| Stage | What happens | Form | Where it lives | Rough size |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 · Download | HF → box disk | raw PDFs | `~/t2-ragbench` (host) | ~72 MB |
+| 2 · Upload | box → retriever ingest job | same PDF bytes | retriever storage (PVC) | ~72 MB |
+| 3 · Ingest | layout → tables → OCR → embed | regions / text / vectors **in flight** | transient in the NIM pods — **not stored** | — |
+| 4 · Index | vectordb writes final rows | `{chunk text, vector, metadata}` (619 chunks) | **LanceDB** PVC | a few MB |
+| 5 · Precompute | chunks prefilled through the engine | **KV tensors** per token | LMCache **L1 (host RAM)** | **~8–9 GB** |
+
+📌 The sizes invert at the end: 72 MB of PDFs → a few MB of index → ~8–9 GB of KV (≈ 619 chunks × ~400 tok × ~34 KB/tok). The KV form is the heaviest by far — which is why **L1 sizing decides what the demo can cache** (Quick Demo fits; the 7,353-PDF Full Benchmark cannot).
+
+📌 Re-ingesting the same corpus duplicates stages 2–4 only (counters inflate; retrieval dedupes identical text at query time). The KV cache does not duplicate — identical chunk text hashes to the same key.
+
+---
+
+## 📖 Reading the Try-It UI log
+
+What each line in the `05-tryit-ui` uvicorn log means:
+
+| Log line | What it is |
+| :--- | :--- |
+| `Started server process` → `Uvicorn running on :8000` | UI process booting — no endpoints involved |
+| `127.0.0.1 - "GET /"` (repeating) | `index.html` fetched from **localhost** — Brev's secure-link prober confirming the port answers, not a person |
+| `<external-ip> - "GET /"` | a real visitor loading the Try-It page through the secure link (`:0` port = proxied) |
+| `GET /api/health` | proxies the **retriever** (`:7670/v1/health`) — drives the `● Retriever` dot |
+| `GET /api/inference/health/baseline` | pings `BASELINE_LLM_URL` (`:8011`) — the `● Baseline (APC)` dot |
+| `GET /api/inference/health/cacheblend` | pings `CACHEBLEND_LLM_URL` (`:8010`) — the `● CacheBlend` dot |
+| `POST /api/ingest` | the **1 PDF / sample** button (ends with the injected 1-request CacheBlend warm) |
+| `POST /api/dataset` + `GET /api/dataset/status` | **Quick Demo / Full Benchmark** download+ingest and its progress polling (quick mode ends with the injected precompute) |
+| `GET /api/dataset/questions` | Benchmark tab loading FinQA questions (also used by `06-precompute`) |
+| `POST /api/rag/stream` | a compare-page **Ask** — one per panel unless context is shared |
+
+> Ingestion only happens via `04-smoke` and the UI ingest buttons — restarting `05` never adds documents. Re-ingesting the same file stores it again (new `document_id`; counters inflate), but retrieval dedupes identical chunk text at query time, so prompts are unaffected.
+
+---
+
 ## 🔍 Verification commands
 
 ```bash
