@@ -129,7 +129,24 @@ At top_k=5 the retrieved context is ~90% of the prompt, so the definitions diffe
 
 </details>
 
-Other UI metric caveats: **APC hit%** is a lifetime cumulative ratio (precompute traffic dilutes one arm — compare per-request deltas instead); **TTFT** counts to the first *content* token, so for reasoning models it includes the whole reasoning phase.
+### Metric columns — counter sources per arm
+
+<details>
+<summary>What each compare/benchmark column reads, per panel (as patched by 05)</summary>
+
+| UI column | Computed as | Baseline panel | CacheBlend panel |
+| :--- | :--- | :--- | :--- |
+| TTFT | client stopwatch → first stream delta of any kind (reasoning incl.) | its own stream | its own stream |
+| E2E | `retrieval_ms` + generation wall clock | its own stream | its own stream |
+| tok/s | content tokens ÷ generation time | its own stream | its own stream |
+| APC hit % | per-request delta of `vllm:prefix_cache_hits/queries_total` | baseline engine `/metrics` | cacheblend engine `/metrics` |
+| Blend % | per-request delta `l1_read/(read+write)` chunks | n/a (no connector) | lmcache server `:8080/metrics` |
+
+- Top three rows are measurements, not counters — identical method both arms.
+- APC hit% reads two independent engines — one arm can be warm while the other is cold.
+- Blend% has one source and one client — don't run a precompute mid-ask or its delta pollutes.
+
+</details>
 
 ---
 
