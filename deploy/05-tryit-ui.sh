@@ -27,6 +27,9 @@ log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 [ -d "$NEMO_DIR/.git" ] || git clone --depth 1 -b "$NEMO_BRANCH" "$NEMO_REPO" "$NEMO_DIR"
 WEBUI="$NEMO_DIR/deploy/brev/webui"
 [ -f "$WEBUI/app.py" ] || { echo "FATAL: $WEBUI/app.py not found"; exit 1; }
+# Reset the served copies to pristine so the patches below re-apply cleanly on every
+# run (otherwise an older patch version blocks the newer one via the idempotency guard).
+git -C "$NEMO_DIR" checkout -- deploy/brev/webui/index.html deploy/brev/webui/app.py 2>/dev/null || true
 
 # Strip the "Run your own experiments" JupyterLab section from the SERVED COPY only
 # (upstream untouched): its button is HARDCODED to the reference instance's dead
@@ -41,6 +44,96 @@ if s2 != s:
     print("  stripped hardcoded JupyterLab section from index.html")
 else:
     print("  (JupyterLab section not found — already stripped or upstream changed)")
+
+# Extend the Full Benchmark confirm: the full corpus far exceeds the CacheBlend L1,
+# so it cannot showcase the cache — steer people to Quick Demo for that.
+old = "this takes a long time. Continue?"
+new = ("this takes a long time, and the corpus far exceeds the CacheBlend L1 cache, "
+       "so it will NOT showcase CacheBlend (no precompute is run). "
+       "Use Quick Demo for the cache comparison. Continue?")
+if old in s2:
+    open(p, "w", encoding="utf-8").write(s2.replace(old, new, 1))
+    print("  extended the Full Benchmark confirm message")
+PY
+
+# Patch the SERVED COPY of app.py: after a dataset ingest completes (Quick Demo /
+# Full Benchmark click), warm the CacheBlend cache with every dataset question
+# (max_tokens=1, prefill-only) BEFORE reporting phase=done. Without this, every
+# first-touch question is a cold store and CacheBlend benchmarks pure overhead.
+# Progress streams into the UI's live ingest log. Idempotent; upstream untouched.
+python3 - "$WEBUI/app.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+if "Precomputing CacheBlend KV cache" in s:
+    print("  (precompute patch already applied)")
+    raise SystemExit(0)
+
+anchor = '''        with _ds_lock:
+            _ds.update(phase="done", elapsed=int(time.monotonic() - t0))'''
+warm = '''        # --- CacheBlend precompute (injected): warm the cache for every dataset question.
+        # QUICK mode only: the full corpus far exceeds the CacheBlend L1, so a full-corpus
+        # warm would evict itself while running (and take hours) — skip it there.
+        if mode == "quick":
+            _dlog("Precomputing CacheBlend KV cache (max_tokens=1, prefill-only)\\u2026")
+            _qs = [q for _p, q, _a in records if q]
+            _w_ok = _w_fail = 0
+            for _q in _qs:
+                try:
+                    _hits, _ = inf.retrieve_context(_q, top_k=5)
+                    _ctx = "\\n\\n---\\n\\n".join(h["text"] for h in _hits if h.get("text"))[:8192]
+                    requests.post(
+                        inf.PATHS["cacheblend"] + "/v1/chat/completions",
+                        json={"model": "cacheblend",
+                              "messages": [
+                                  {"role": "system", "content": inf._RAG_SYSTEM},
+                                  {"role": "user", "content": f"Context:\\n{_ctx}\\n\\nQuestion: {_q}"}],
+                              "max_tokens": 1, "temperature": 0},
+                        timeout=300)
+                    _w_ok += 1
+                except Exception as _exc:  # noqa: BLE001
+                    _w_fail += 1
+                if (_w_ok + _w_fail) % 25 == 0:
+                    _dlog(f"  precomputed {_w_ok + _w_fail}/{len(_qs)} ({_w_fail} failed)")
+                    with _ds_lock:
+                        _ds.update(elapsed=int(time.monotonic() - t0))
+            _dlog(f"Precompute done \\u2014 {_w_ok} warmed, {_w_fail} failed of {len(_qs)}")
+        else:
+            _dlog("Skipping CacheBlend precompute: full corpus exceeds the L1 cache \\u2014 use Quick Demo for cache comparisons.")
+'''
+if anchor not in s:
+    print("  WARN: precompute anchor not found in app.py — upstream changed; patch NOT applied")
+    raise SystemExit(0)
+s = s.replace(anchor, warm + anchor, 1)
+
+# Also warm after the 1-PDF / sample ingest (_ingest_files): one prefill-only request
+# with the canonical demo question, so the first compare ask on the sample is warm too.
+anchor2 = '''    total = sum((d["rows"] or 0) for d in docs_out)
+    return {"job_id": jid, "documents": docs_out, "total_rows": total}'''
+warm2 = '''    total = sum((d["rows"] or 0) for d in docs_out)
+    # --- CacheBlend precompute (injected): warm the just-ingested sample (1 request)
+    try:
+        _q = "Which animal is jumping onto a laptop?"
+        _hits, _ = inf.retrieve_context(_q, top_k=5)
+        _ctx = "\\n\\n---\\n\\n".join(h["text"] for h in _hits if h.get("text"))[:8192]
+        requests.post(
+            inf.PATHS["cacheblend"] + "/v1/chat/completions",
+            json={"model": "cacheblend",
+                  "messages": [{"role": "system", "content": inf._RAG_SYSTEM},
+                               {"role": "user", "content": f"Context:\\n{_ctx}\\n\\nQuestion: {_q}"}],
+                  "max_tokens": 1, "temperature": 0},
+            timeout=300)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"job_id": jid, "documents": docs_out, "total_rows": total}'''
+if anchor2 in s:
+    s = s.replace(anchor2, warm2, 1)
+    print("  patched app.py: sample/1-PDF ingest also precomputes (1 request)")
+else:
+    print("  WARN: 1-PDF anchor not found — sample warm NOT applied")
+
+open(p, "w", encoding="utf-8").write(s)
+print("  patched app.py: dataset ingest now precomputes the CacheBlend cache before 'done'")
 PY
 
 # --- venv (mirrors upstream setup.sh) -------------------------------------------------
