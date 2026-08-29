@@ -25,7 +25,11 @@ spec:
           # args-only (no command: override — the webhook skips those)
           args:
             - openai/gpt-oss-20b
-            - --served-model-name=openai/gpt-oss-20b
+            # second name = alias: the compare UI addresses the arms as model
+            # "baseline" / "cacheblend" (Dynamo-era naming) — serve both names.
+            - --served-model-name
+            - openai/gpt-oss-20b
+            - cacheblend
             - --trust-remote-code
             - --tensor-parallel-size=1
             - --max-model-len=36864          # aligned with baseline for a fair A/B
