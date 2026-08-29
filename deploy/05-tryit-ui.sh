@@ -280,4 +280,16 @@ export LLM_MODEL="openai/gpt-oss-20b"            # upstream default is Llama-3.1
 log "Try-It UI on http://localhost:${UI_PORT}  (compare: /compare · benchmark: /benchmark)"
 echo "  from your laptop:  ssh -L ${UI_PORT}:localhost:${UI_PORT} <box>   then open http://localhost:${UI_PORT}"
 cd "$WEBUI"
-exec "$VENV/bin/uvicorn" app:app --host 0.0.0.0 --port "$UI_PORT"
+if [ "${UI_BACKGROUND:-0}" = "1" ]; then
+  # bootstrap mode: background the UI so the lifecycle script can finish and the
+  # instance reports ready — the tryit-ui secure link (CTA) then points at a live page.
+  pkill -f "uvicorn app:app" 2>/dev/null || true
+  nohup setsid "$VENV/bin/uvicorn" app:app --host 0.0.0.0 --port "$UI_PORT" \
+    > "$HOME/tryit-ui.log" 2>&1 &
+  sleep 5
+  curl -sf "http://localhost:${UI_PORT}/" >/dev/null \
+    && log "UI backgrounded and answering (log: ~/tryit-ui.log)" \
+    || echo "  WARN: UI not answering yet — check ~/tryit-ui.log"
+else
+  exec "$VENV/bin/uvicorn" app:app --host 0.0.0.0 --port "$UI_PORT"
+fi

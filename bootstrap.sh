@@ -19,7 +19,7 @@ bash "$HERE/deploy/01-cluster.sh"     # driver sanity + microk8s + cert-manager
 bash "$HERE/deploy/02-engines.sh"     # TMO operator + CacheBlend + baseline (svc :8000 each)
 bash "$HERE/deploy/03-nemo.sh"        # NeMo Retriever core (svc :7670)
 bash "$HERE/deploy/04-smoke.sh"       # E2E proof: ingest -> retrieve -> generate (non-fatal)
-# bash "$HERE/deploy/05-tryit-ui.sh"  # Try-It web UI (manual for now — run it yourself on the box)
+UI_BACKGROUND=1 bash "$HERE/deploy/05-tryit-ui.sh"   # Try-It web UI (backgrounded; CTA secure link)
 
 cat <<EOF
 
