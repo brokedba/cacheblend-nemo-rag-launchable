@@ -66,7 +66,7 @@ for i in $(seq 1 30); do
   sleep 5
 done
 
-# --- NeMo Retriever core chart (vendored in this repo — no runtime clone) -----
+# --- NeMo Retriever core chart (lives in this repo — no runtime clone) --------
 kubectl create ns "$NS" --dry-run=client -o yaml | kubectl apply -f -
 log "helm install NeMo Retriever (core RAG) into ns/$NS"
 helm upgrade --install "$RELEASE" "$ROOT/config/nemo/chart" \

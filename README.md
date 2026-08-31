@@ -28,7 +28,7 @@
 │   │   ├── tmo-cacheblend-values.yaml    # TMO Helm values (operator + CacheBlendEngine)
 │   │   └── gpu-timeslicing.yaml          # time-slice config for the NeMo GPU
 │   └── nemo/
-│       ├── chart/                        # NeMo Retriever helm chart (vendored)
+│       ├── chart/                        # NeMo Retriever helm chart
 │       └── values-brev-core.yaml         # chart values for this deploy
 ├── docs/
 │   └── VALIDATION.md                     # reference run + failure modes the scripts handle
