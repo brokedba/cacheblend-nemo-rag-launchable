@@ -1,0 +1,106 @@
+Thanks for installing {{ .Chart.Name }} ({{ .Chart.Version }}, app {{ .Chart.AppVersion }}).
+
+Release name : {{ .Release.Name }}
+Namespace    : {{ .Release.Namespace }}
+Topology     : {{ .Values.topology.mode }}
+
+{{- if eq .Values.topology.mode "standalone" }}
+Service name : {{ include "nemo-retriever.fullname" . }}
+{{- else }}
+Services:
+  gateway  : {{ include "nemo-retriever.role.fullname" (dict "context" . "role" "gateway") }}
+  realtime : {{ include "nemo-retriever.role.fullname" (dict "context" . "role" "realtime") }}
+  batch    : {{ include "nemo-retriever.role.fullname" (dict "context" . "role" "batch") }}
+{{- end }}
+
+1. Wait for the service Pod(s) to be ready:
+   kubectl --namespace {{ .Release.Namespace }} get pods -l "app.kubernetes.io/instance={{ .Release.Name }}" -w
+
+{{- if .Values.ingress.enabled }}
+
+2. Reach the API via Ingress:
+{{- range .Values.ingress.hosts }}
+   - http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}{{ (index .paths 0).path }}docs
+{{- end }}
+{{- else }}
+{{- if eq .Values.topology.mode "standalone" }}
+
+2. Port-forward to reach the API locally:
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "nemo-retriever.fullname" . }} 7670:{{ .Values.networkService.port }}
+
+   Then open: http://localhost:7670/docs
+{{- else }}
+
+2. Port-forward to the gateway to reach the API locally:
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "nemo-retriever.role.fullname" (dict "context" . "role" "gateway") }} 7670:{{ .Values.networkService.port }}
+
+   Then open: http://localhost:7670/docs
+{{- end }}
+{{- end }}
+
+3. Quick health check:
+   curl -fsSL http://localhost:7670/v1/health
+   curl -fsSL http://localhost:7670/v1/ingest/metrics
+
+{{- if and .Values.nims.enabled (.Capabilities.APIVersions.Has "apps.nvidia.com/v1alpha1") }}
+
+4. The NVIDIA NIM Operator CRDs were detected and nims.enabled=true —
+   the following NIMServices were submitted for reconciliation (each
+   lands as a Deployment + Service owned by the operator):
+{{- if .Values.nimOperator.page_elements.enabled }}
+   - nemotron-page-elements-v3   → http://nemotron-page-elements-v3:{{ .Values.nimOperator.page_elements.expose.service.port }}/v1/infer
+{{- end }}
+{{- if .Values.nimOperator.table_structure.enabled }}
+   - nemotron-table-structure-v1 → http://nemotron-table-structure-v1:{{ .Values.nimOperator.table_structure.expose.service.port }}/v1/infer
+{{- end }}
+{{- if .Values.nimOperator.ocr.enabled }}
+   - {{ .Values.nimOperator.ocr.nimServiceName }} → http://{{ .Values.nimOperator.ocr.nimServiceName }}:{{ .Values.nimOperator.ocr.expose.service.port }}/v1/infer
+{{- end }}
+{{- if .Values.nimOperator.vlm_embed.enabled }}
+   - {{ .Values.nimOperator.vlm_embed.nimServiceName }} → http://{{ .Values.nimOperator.vlm_embed.nimServiceName }}:{{ .Values.nimOperator.vlm_embed.expose.service.port }}/v1/embeddings
+{{- end }}
+{{- if .Values.nimOperator.answer_llm.enabled }}
+   - {{ .Values.nimOperator.answer_llm.nimServiceName }} → http://{{ .Values.nimOperator.answer_llm.nimServiceName }}:{{ .Values.nimOperator.answer_llm.expose.service.port }}/v1/chat/completions
+     (auto-wired into the retriever service config as `llm.api_base` for `/v1/answer`)
+{{- end }}
+{{- if .Values.nimOperator.rerankqa.enabled }}
+   - llama-nemotron-rerank-vl-1b-v2 → http://llama-nemotron-rerank-vl-1b-v2:{{ .Values.nimOperator.rerankqa.expose.service.port }}
+{{- end }}
+{{- if .Values.nimOperator.nemotron_parse.enabled }}
+   - nemotron-parse              → http://nemotron-parse:{{ .Values.nimOperator.nemotron_parse.expose.service.port }}
+{{- end }}
+{{- if .Values.nimOperator.nemotron_3_nano_omni_30b_a3b_reasoning.enabled }}
+   - nemotron-3-nano-omni-30b-a3b-reasoning → http://nemotron-3-nano-omni-30b-a3b-reasoning:{{ .Values.nimOperator.nemotron_3_nano_omni_30b_a3b_reasoning.expose.service.port }}/v1/chat/completions
+     (auto-wired into the retriever service config as
+      `nim_endpoints.caption_invoke_url`; image-caption stage is gated
+      on this URL — see Helm README "Image captioning (Omni 30B)")
+{{- end }}
+{{- if .Values.nimOperator.audio.enabled }}
+   - audio                       → http://audio:{{ .Values.nimOperator.audio.expose.service.port }}
+{{- end }}
+
+   Track operator reconciliation:
+     kubectl --namespace {{ .Release.Namespace }} get nimcache,nimservice
+     kubectl --namespace {{ .Release.Namespace }} describe nimservice <name>
+
+   First-time NIMCache reconciliation downloads model weights to a PVC;
+   allow several minutes before each NIMService reports ready.
+
+{{- else }}
+
+4. No NIMCache/NIMService resources were rendered for this release:
+{{- if not .Values.nims.enabled }}
+     - `nims.enabled` is false (master switch off).
+{{- end }}
+{{- if not (.Capabilities.APIVersions.Has "apps.nvidia.com/v1alpha1") }}
+     - The NIM Operator CRDs (apps.nvidia.com/v1alpha1) are NOT installed
+       in this cluster. Install it with:
+         helm install k8s-nim-operator nvidia/k8s-nim-operator \
+           --namespace nim-operator --create-namespace
+{{- end }}
+
+   The service will call the external NIM URLs declared in
+   `serviceConfig.nimEndpoints.*`. If those are blank you must set them
+   (e.g. via `--set serviceConfig.nimEndpoints.pageElementsInvokeUrl=...`)
+   or the pipeline will fail every page.
+{{- end }}

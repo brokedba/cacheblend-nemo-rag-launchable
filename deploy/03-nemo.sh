@@ -17,9 +17,6 @@ esac
 
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"; MF="$ROOT/config/manifests"
 NS=retriever; RELEASE=retriever
-NEMO_REPO="${NEMO_REPO:-https://github.com/yiwzhao/NeMo-Retriever.git}"   # NeMo Retriever chart source (overridable)
-NEMO_BRANCH="${NEMO_BRANCH:-brev-launchable}"
-NEMO_DIR="${NEMO_DIR:-/tmp/nemo-retriever}"
 log() { echo -e "\n\033[1;32m==> $*\033[0m"; }
 
 # --- GPU time-slicing so the 4 NIMs can schedule ------------------------------
@@ -69,13 +66,10 @@ for i in $(seq 1 30); do
   sleep 5
 done
 
-# --- NeMo Retriever core chart (cloned from $NEMO_REPO at runtime) ------------
-log "cloning NeMo Retriever chart ($NEMO_BRANCH)"
-[ -d "$NEMO_DIR/.git" ] || git clone --depth 1 -b "$NEMO_BRANCH" "$NEMO_REPO" "$NEMO_DIR"
-
+# --- NeMo Retriever core chart (vendored in this repo — no runtime clone) -----
 kubectl create ns "$NS" --dry-run=client -o yaml | kubectl apply -f -
 log "helm install NeMo Retriever (core RAG) into ns/$NS"
-helm upgrade --install "$RELEASE" "$NEMO_DIR/nemo_retriever/helm" \
+helm upgrade --install "$RELEASE" "$ROOT/config/nemo/chart" \
   -n "$NS" -f "$ROOT/config/nemo/values-brev-core.yaml" \
   --set ngcImagePullSecret.create=true --set ngcImagePullSecret.password="$NGC_API_KEY" \
   --set ngcApiSecret.create=true --set ngcApiSecret.password="$NGC_API_KEY" \

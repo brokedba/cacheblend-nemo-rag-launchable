@@ -9,11 +9,18 @@
 
 ```bash
 ./
-├── bootstrap.sh                          # orchestrator — guards env, runs the 3 deploy steps
+├── bootstrap.sh                          # orchestrator — guards env, runs the deploy steps
 ├── deploy/
 │   ├── 01-cluster.sh                     # driver sanity + microk8s ready + cert-manager
 │   ├── 02-engines.sh                     # TMO operator + CacheBlend arm + baseline arm
-│   └── 03-nemo.sh                        # GPU time-slicing + NIM Operator + NeMo chart
+│   ├── 03-nemo.sh                        # GPU time-slicing + NIM Operator + NeMo chart
+│   ├── 04-smoke.sh                       # E2E proof: ingest -> retrieve -> generate
+│   ├── 05-tryit-ui.sh                    # Try-It web UI (serves ui/webui)
+│   └── 06-precompute.sh                  # optional: re-warm the CacheBlend cache
+├── ui/
+│   ├── webui/                            # Try-It UI — compare + benchmark tabs (see ui/README.md)
+│   └── download_dataset.py               # benchmark dataset downloader
+├── data/                                 # sample PDFs for the ingest buttons
 ├── config/
 │   ├── manifests/
 │   │   ├── engine-cacheblend.yaml        # optimized: vLLM + APC + CacheBlend (webhook-injected)
@@ -21,7 +28,8 @@
 │   │   ├── tmo-cacheblend-values.yaml    # TMO Helm values (operator + CacheBlendEngine)
 │   │   └── gpu-timeslicing.yaml          # time-slice config for the NeMo GPU
 │   └── nemo/
-│       └── values-brev-core.yaml         # NeMo Retriever "core RAG" chart values
+│       ├── chart/                        # NeMo Retriever helm chart (vendored)
+│       └── values-brev-core.yaml         # chart values for this deploy
 ├── docs/
 │   └── VALIDATION.md                     # reference run + failure modes the scripts handle
 └── README.md                             # ← you are here
