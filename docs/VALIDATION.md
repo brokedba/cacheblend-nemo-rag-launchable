@@ -98,7 +98,7 @@ What each line in the `05-tryit-ui` uvicorn log means:
 
 ## 🎯 CacheBlend metrics live on the blend server (`:8080`), not vLLM
 
-The compare UI derives Blend% from vLLM's `external_prefix_cache_hits_total` — which **never increments** under `CBKVConnector` (blended KV is injected mid-sequence, not claimed as prefix). The real counters are on the lmcache server's HTTP port:
+vLLM's `external_prefix_cache_hits_total` **never increments** under `CBKVConnector` (blended KV is injected mid-sequence, not claimed as prefix) — so the UI (`ui/webui`) derives Blend% from the real counters on the lmcache server's HTTP port instead:
 
 ```
 lmcache_mp_l1_write_chunks_total   2118    ← stores
@@ -134,7 +134,7 @@ At top_k=5 the retrieved context is ~90% of the prompt, so the definitions diffe
 ### Metric columns — counter sources per arm
 
 <details>
-<summary>What each compare/benchmark column reads, per panel (as patched by 05)</summary>
+<summary>What each compare/benchmark column reads, per panel (ui/webui)</summary>
 
 | UI column | Computed as | Baseline panel | CacheBlend panel |
 | :--- | :--- | :--- | :--- |

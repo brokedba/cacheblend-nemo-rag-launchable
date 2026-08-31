@@ -8,7 +8,7 @@ set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(dirname "$HERE")"
 NS_R="${NS_R:-retriever}"; NS_W="${NS_W:-cacheblend-workload}"; RELEASE="${RELEASE:-retriever}"
-PDF="${SMOKE_PDF:-${NEMO_DIR:-/tmp/nemo-retriever}/data/multimodal_test.pdf}"
+PDF="${SMOKE_PDF:-$ROOT/data/multimodal_test.pdf}"
 Q="${SMOKE_QUERY:-Which animal is jumping onto a laptop?}"
 # Known-good answer for the default PDF/query — makes PASS mean "answered CORRECTLY"
 # rather than merely "answered". Override together with SMOKE_QUERY/SMOKE_PDF.
