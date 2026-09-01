@@ -14,6 +14,7 @@ Fresh 4× RTX PRO 6000 node, empty caches, `0.5.3` tuple. **~31 min end to end**
 | `02-engines` | ~9 min | both engines serving, MP store fired |
 | `03-nemo` | ~20 min | 4 NIMServices Ready, retriever healthy |
 | `04-smoke` | ~1 min | correct answer from both arms |
+| `05-tryit-ui` | ~1 min | UI backgrounded and answering (secure link live) |
 
 ---
 
