@@ -115,6 +115,22 @@ lmcache_mp_l1_evicted_chunks_total  411    ← evictions (TTL, see below)
 
 📌 Useful `:8080` endpoints: `GET /status` (L1 occupancy, TTLs), `GET /cache/objects` (what's stored), `POST /cache/clear` (clean cold/warm resets without redeploying), `POST /metrics/reset`.
 
+### Native counters vs derived metrics (0.5.3)
+
+All native values come from the cache server's `:8080/metrics` (plain HTTP — no Prometheus server or OTel collector needed) unless noted.
+
+| Signal | Source | Native / derived |
+| :--- | :--- | :--- |
+| Chunk reads / writes / evictions | `lmcache_mp_l1_{read,write,evicted}_chunks_total` | native counter |
+| Hit-rate ingredients (token-level, prefix vs non-prefix split) | `lmcache_blend_lookup_{requested,hit,prefix_hit,non_prefix_hit}_tokens_total` | native counter |
+| Cache load throughput | `lmcache_mp_l0_l1_load_throughput_GBs`, `lmcache_mp_l2_load_throughput_GBs` | native histogram |
+| L1 fullness | `lmcache_mp_l1_usage_ratio` | native gauge |
+| Occupancy + TTLs | `GET :8080/status` | native (JSON) |
+| Hit rate | `hit ÷ requested` tokens | derived |
+| Misses | `requested − hit` tokens | derived |
+| Per-request values (Blend%, APC%) | before/after counter delta (method above) | derived |
+| Selectively recomputed tokens | `recomp_ratio × non_prefix_hit_tokens` — `recomp_ratio` is a vLLM plugin launch parameter, not a runtime variable | derived |
+
 ### Blend % definition
 
 <details>
