@@ -107,9 +107,11 @@ lmcache_mp_l1_read_chunks_total     198    ← actual blend reuse
 lmcache_mp_l1_evicted_chunks_total  411    ← evictions (TTL, see below)
 ```
 
-📌 Blend% is rescuable with current images: per-request **delta** of `l1_read_chunks_total` (after − before) × 256 (chunk size) ÷ prompt tokens = true reuse fraction.
+📌 The UI's **Blend% column** reads the token-level counters: per-request **delta** of `lmcache_blend_lookup_non_prefix_hit_tokens_total ÷ lmcache_blend_lookup_requested_tokens_total` — the blend server classifies each reused chunk by match position (prefix = same position from token 0; non-prefix = shifted). The chunk-delta ratio `Δl1_read/(Δread+Δwrite)` is kept as a secondary value (`lmcache_hit_ratio` = total CPU-tier reuse, both legs).
 
-📌 **Cross-checked** (25-q FinQA run): the blend server's `CB sparse classify` totals (`21 found of 73 submitted` ≈ 29%) independently match the counter-delta blend ratio (24.7%) — two measurement paths, same number.
+📌 **Cross-checked** (25-q FinQA run): the blend server's `CB sparse classify` totals (`21 found of 73 submitted` ≈ 29%) independently match the chunk-delta CPU-reuse ratio (24.7%) — two measurement paths, same number. (This validates `lmcache_hit_ratio`; the Blend% column was validated separately, below.)
+
+📌 **Blend% column verified live** (0.5.3, six-ask session): cross-document questions read 57–86% non-prefix; a repeated identical prompt reads **0% by design** (that reuse is prefix-shaped and attributed to APC); raw `non_prefix_hit_tokens` deltas land in exact 256-token chunk quanta.
 
 📌 **Stored KV has a TTL.** `GET :8080/status` → `write_ttl_seconds: 600`, `read_ttl_seconds: 300` — L1 entries expire ~10 min after write (observed: 7/7 keys retained at +5 min → 1/6 with 5 "stale" at +10 min; evictions fire at 67% usage, well under the 0.8 watermark, so it's TTL, not pressure). **Any precompute must land within ~10 min of the queries it serves**, until the TTL is configurable/pinnable.
 
@@ -142,9 +144,11 @@ The prompt is `system + retrieved chunks + question`. Only the **retrieved chunk
 | :--- | :--- | :--- |
 | engine view | whole prompt tokens | "how much of prefill was served from cache" — ceiling < 100% (system + question never blend) |
 | RAG view | retrieved-context tokens only | "how much of the vector-DB fetch was reused" — ceiling 100% |
-| **this deployment** | `reads / (reads + writes)` chunk delta | "of the chunks lmcache touched this request, how many came from cache vs stored fresh" — computable from the two `:8080` counters alone, no tokenizer needed |
+| **this deployment** | `non_prefix_hit_tokens ÷ requested_tokens` (per-request delta) | "of the chunk-aligned tokens submitted for lookup, how many were reused at **shifted positions**" — the CacheBlend-specific reuse, position-classified by the blend server itself |
 
-At top_k=5 the retrieved context is ~90% of the prompt, so the definitions differ by a few points, not meaning. Under all three: **0% = cold store, high % = precompute consumed.**
+Secondary value (payload `lmcache_hit_ratio`): `reads/(reads+writes)` chunk delta = total CPU-tier reuse, both legs — no tokenizer needed, but it amalgamates prefix-shaped and non-prefix reuse.
+
+At top_k=5 the retrieved context is ~90% of the prompt, so the definitions differ by a few points, not meaning. New nuance under the non-prefix definition: **a repeated identical prompt reads ~0% by design** — that reuse is position-identical (prefix-shaped) and shows up in APC instead. Blend% lights up on novel and cross-document contexts, where shared chunks land at shifted positions.
 
 </details>
 
