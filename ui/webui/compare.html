@@ -617,7 +617,7 @@ function renderBenchResults(s) {
       'Throughput — output tokens per second': tput.avg != null ? tput.avg + ' tok/s' : null,
       'APC hit rate — in-GPU prefix cache reuse': agg?.prefix_cache_hit_rate?.avg != null
         ? (agg.prefix_cache_hit_rate.avg * 100).toFixed(1) + '%' : null,
-      'Blend ratio — CPU KV reuse by CacheBlend': agg?.lmcache_blend_ratio?.avg != null
+      'Blend ratio — non-prefix KV reuse by CacheBlend': agg?.lmcache_blend_ratio?.avg != null
         ? (agg.lmcache_blend_ratio.avg * 100).toFixed(1) + '%' : null,
     }, cls);
   }

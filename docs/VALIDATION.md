@@ -159,7 +159,8 @@ At top_k=5 the retrieved context is ~90% of the prompt, so the definitions diffe
 | E2E | `retrieval_ms` + generation wall clock | its own stream | its own stream |
 | tok/s | content tokens ÷ generation time | its own stream | its own stream |
 | APC hit % | per-request delta of `vllm:prefix_cache_hits/queries_total` | baseline engine `/metrics` | cacheblend engine `/metrics` |
-| Blend % | per-request delta `l1_read/(read+write)` chunks | n/a (no connector) | lmcache server `:8080/metrics` |
+| Blend % | per-request delta `lmcache_blend_lookup_non_prefix_hit_tokens ÷ requested_tokens` — token-level, position-classified by the blend server; a repeated identical prompt correctly reads ~0 (that reuse is prefix-shaped) | n/a (no connector) | lmcache server `:8080/metrics` |
+| CPU reuse + prefix hit rate (metrics payload + benchmark JSON) | `Δl1_read/(Δread+Δwrite)` chunks = total CPU-tier reuse, both legs (`lmcache_hit_ratio`); `Δprefix_hit_tokens ÷ requested` (`lmcache_prefix_hit_rate`) | n/a | lmcache server `:8080/metrics` |
 
 - Top three rows are measurements, not counters — identical method both arms.
 - APC hit% reads two independent engines — one arm can be warm while the other is cold.

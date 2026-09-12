@@ -48,7 +48,8 @@ LMCACHE_METRICS_URL = os.environ.get("LMCACHE_METRICS_URL", "http://localhost:80
 
 def _kv_counters(base_url: str) -> dict:
     """Raw cumulative counters, scraped before/after a request for deltas."""
-    out = {"apc_q": 0.0, "apc_h": 0.0, "l1_r": 0.0, "l1_w": 0.0}
+    out = {"apc_q": 0.0, "apc_h": 0.0, "l1_r": 0.0, "l1_w": 0.0,
+           "bl_req": 0.0, "bl_p": 0.0, "bl_np": 0.0}
     try:
         for line in requests.get(f"{base_url}/metrics", timeout=5).text.splitlines():
             if line.startswith("vllm:prefix_cache_queries_total"):
@@ -58,12 +59,23 @@ def _kv_counters(base_url: str) -> dict:
     except Exception:  # noqa: BLE001
         pass
     if base_url == CACHEBLEND_LLM_URL:
+        # blend token counters can carry labels ({model_name=...}) — sum across label sets
+        _blend = {
+            "lmcache_blend_lookup_requested_tokens_total": "bl_req",
+            "lmcache_blend_lookup_prefix_hit_tokens_total": "bl_p",
+            "lmcache_blend_lookup_non_prefix_hit_tokens_total": "bl_np",
+        }
         try:
             for line in requests.get(LMCACHE_METRICS_URL, timeout=5).text.splitlines():
                 if line.startswith("lmcache_mp_l1_read_chunks_total"):
                     out["l1_r"] = float(line.split()[-1])
                 elif line.startswith("lmcache_mp_l1_write_chunks_total"):
                     out["l1_w"] = float(line.split()[-1])
+                else:
+                    for _name, _key in _blend.items():
+                        if line.startswith(_name) and line[len(_name)] in " {":
+                            out[_key] += float(line.split()[-1])
+                            break
         except Exception:  # noqa: BLE001
             pass
     return out
@@ -277,11 +289,21 @@ def rag_stream(
         _dh = max(_kv1["apc_h"] - _kv0["apc_h"], 0.0)
         if _dq > 0:
             vllm_metrics["vllm:prefix_cache_hit_rate"] = round(_dh / _dq, 4)
+        # total CPU-tier reuse (both legs) — secondary value, NOT the Blend% column
         _dr = max(_kv1["l1_r"] - _kv0["l1_r"], 0.0)
         _dw = max(_kv1["l1_w"] - _kv0["l1_w"], 0.0)
         if (_dr + _dw) > 0:
-            vllm_metrics["lmcache:blend_ratio"] = round(_dr / (_dr + _dw), 4)
-            vllm_metrics["lmcache:hit_ratio"] = vllm_metrics["lmcache:blend_ratio"]
+            vllm_metrics["lmcache:hit_ratio"] = round(_dr / (_dr + _dw), 4)
+        # Blend% = NON-PREFIX hit rate, token-level. The blend server classifies
+        # each reused chunk by match position: prefix = same position from token 0
+        # (prefix-shaped reuse), non-prefix = shifted position — the reuse only
+        # CacheBlend provides. A repeated identical prompt correctly reads ~0 here.
+        _dbr = max(_kv1["bl_req"] - _kv0["bl_req"], 0.0)
+        if _dbr > 0:
+            vllm_metrics["lmcache:prefix_hit_rate"] = round(
+                max(_kv1["bl_p"] - _kv0["bl_p"], 0.0) / _dbr, 4)
+            vllm_metrics["lmcache:blend_ratio"] = round(
+                max(_kv1["bl_np"] - _kv0["bl_np"], 0.0) / _dbr, 4)
     except Exception:  # noqa: BLE001
         pass
 
@@ -297,6 +319,7 @@ def rag_stream(
         "gpu_cache_usage_perc": vllm_metrics.get("vllm:gpu_cache_usage_perc"),
         "lmcache_hit_ratio": vllm_metrics.get("lmcache:hit_ratio"),
         "lmcache_blend_ratio": vllm_metrics.get("lmcache:blend_ratio"),
+        "lmcache_prefix_hit_rate": vllm_metrics.get("lmcache:prefix_hit_rate"),
         "error": error,
     }
 
@@ -477,7 +500,8 @@ def run_inference_benchmark(
                           f"throughput={rec.get('throughput_tok_s')}tok/s "
                           f"prefix_hit={rec.get('prefix_cache_hit_rate')}")
                 if path == "cacheblend":
-                    status += f" blend={rec.get('lmcache_blend_ratio')}"
+                    status += (f" blend={rec.get('lmcache_blend_ratio')}"
+                               f" cpu_reuse={rec.get('lmcache_hit_ratio')}")
                 _log(status)
 
         result_f.close()
@@ -494,6 +518,8 @@ def run_inference_benchmark(
                        if r.get("prefix_cache_hit_rate") is not None]
         blend_ratios = [r["lmcache_blend_ratio"] for r in records
                         if r.get("lmcache_blend_ratio") is not None]
+        cpu_reuse = [r["lmcache_hit_ratio"] for r in records
+                     if r.get("lmcache_hit_ratio") is not None]
         return {
             "n_queries": len(records),
             "ttft_ms": _agg_latency(ttfts),
@@ -510,6 +536,10 @@ def run_inference_benchmark(
             "lmcache_blend_ratio": {
                 "avg": round(statistics.mean(blend_ratios), 4) if blend_ratios else None,
                 "samples": len(blend_ratios),
+            },
+            "lmcache_cpu_reuse": {
+                "avg": round(statistics.mean(cpu_reuse), 4) if cpu_reuse else None,
+                "samples": len(cpu_reuse),
             },
             "errors": sum(1 for r in records if r.get("error")),
         }
